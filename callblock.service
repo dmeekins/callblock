@@ -1,0 +1,12 @@
+[Unit]
+Description=Call Blocker
+After=multi-user.target
+
+[Service]
+Type=forking
+PIDFile=/var/run/callblock.pid
+ExecStart=/usr/local/sbin/callblock.py
+ExecReload=/bin/kill -HUP $MAINPID
+
+[Install]
+WantedBy=default.target
