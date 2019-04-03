@@ -24,6 +24,7 @@
 
 import binascii
 import fcntl
+import glob
 import logging
 import os
 import re
@@ -45,22 +46,18 @@ config = ConfigParser()
 configFile = None
 
 class Call:
-
     def __init__(self, dt=None, number='', name=''):
         self.datetime = dt or datetime.now()
         self.number = number
         self.name = name.upper()
-
         return
 
     def __str__(self):
-        return 'date=%s, number=%s, name=%s' % (self.datetime.isoformat(),
-                                                self.number,
-                                                self.name)
+        return 'date={}, number={}, name={}'.format(
+            self.datetime.isoformat(), self.number, self.name)
 
 
 class Modem:
-
     def __init__(self, device):
         self.device = device
         self.fd = -1
@@ -128,7 +125,6 @@ class Modem:
     def reset(self):
         if self.fd < 0:
             return False
-
         if not self.send('ATZ'):
             return False
         return self.send('AT+VCID=1')
@@ -136,11 +132,9 @@ class Modem:
     def close(self):
         if self.fd < 0:
             return
-
         self.send('ATZ')
         os.close(self.fd)
         self.fd = -1
-
         return
 
     def wait_for_call(self):
@@ -149,7 +143,6 @@ class Modem:
                 bytes_ = os.read(self.fd, self.MAX_READ)
             except InterruptedError:
                 bytes_ = None
-
             if not bytes_:
                 break
             data = bytes_.decode()
@@ -178,7 +171,6 @@ class Modem:
 
 
 def daemonize():
-
     # double fork to get rid of parent
     try:
         if os.fork() > 0:
@@ -212,7 +204,6 @@ def daemonize():
 
     return True
 
-
 def call_loop(modem, blacklist):
     global running
 
@@ -236,13 +227,13 @@ def call_loop(modem, blacklist):
                     block = True
                     break
         if block:
-            logging.info('blocking call from %s/%s' % (call.number, call.name))
+            logging.info(
+                'blocking call from {}/{}'.format(call.number, call.name))
             modem.pickup()
             modem.hangup()
             modem.reset()
 
     return
-
 
 def update_blacklist(config):
     global blacklist
@@ -257,12 +248,9 @@ def update_blacklist(config):
     else:
         blacklist['numbers'] = []
         blacklist['names'] = []
-
     return
 
-
 def signal_handler(signum, frame):
-    global blacklist
     global config
     global configfile
     global running
@@ -274,9 +262,9 @@ def signal_handler(signum, frame):
     elif signum in [signal.SIGINT, signal.SIGTERM]:
         logging.info('received SIGINT or SIGTERM, stopping')
         running = False
-
+        # also raise this for python >3.5 b/c otherwise os.read() will retry
+        raise InterruptedError('')
     return
-
 
 def main():
     global blacklist
@@ -320,7 +308,7 @@ def main():
               config['General'].get('Log', '/var/log/callblock.log')
 
     if os.path.exists(pidfile):
-        print('ERROR: pidfile %s exists' % pidfile)
+        print('ERROR: pidfile {} exists'.format(pidfile))
         sys.exit(1)
 
     # logging params
@@ -339,7 +327,7 @@ def main():
                             level=level, stream=sys.stderr)
 
     with open(pidfile, 'w') as fd:
-        fd.write('%d\n' % os.getpid())
+        fd.write('{}\n'.format(os.getpid()))
 
     # set the signal handler after forking
     signal.signal(signal.SIGHUP, signal_handler)
@@ -353,14 +341,23 @@ def main():
         if not device:
             logging.error('no device specified')
             logging.shutdown()
+            os.unlink(pidfile)
             sys.exit(1)
 
     update_blacklist(config)
 
-    modem = Modem(device)
-    if not modem.open():
-        logging.error('failed to open {}'.format(device))
+    modem = None
+    for dev in glob.glob(device):
+        modem = Modem(dev)
+        if modem.open():
+            logging.info('opened device {}'.format(dev))
+            break
+        logging.warn('failed to open {}'.format(dev))
+        modem = None
+    if not modem:
+        logging.error('all device attempts failed')
         logging.shutdown()
+        os.unlink(pidfile)
         sys.exit(1)
 
     logging.info('callblock started')
@@ -371,7 +368,6 @@ def main():
     os.unlink(pidfile)
 
     return
-
 
 if __name__ == '__main__':
     main()
